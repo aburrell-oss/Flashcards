@@ -36,6 +36,21 @@
             <version>5.11.0</version>
             <scope>compile</scope>
         </dependency>
+        <!-- Mockito Core -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>5.21.0</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Mockito for JUnit 5 Static Mocking (mockStatic) -->
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-inline</artifactId>
+            <version>5.2.0</version> <!-- use latest version -->
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>

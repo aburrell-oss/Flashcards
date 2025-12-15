@@ -16,20 +16,29 @@ import java.util.Scanner;
  * Supports add, remove, import, export, ask, log, hardest card and
  * reset stats operations. All console I/O is recorded into an internal
  * session log which may be saved to a file on demand.
+ *
+ * Optimized version with O(1) lookups and reduced iterations.
  */
 public class Flashcard {
 
     /**
      * Scanner used to read user input from standard input using UTF-8.
+     * Package-private and non-final to allow test injection.
      */
-    private static final Scanner SCANNER =
-            new Scanner(System.in, StandardCharsets.UTF_8);
+    static Scanner SCANNER = new Scanner(System.in, StandardCharsets.UTF_8);
 
     /**
      * Map of term -> definition. LinkedHashMap is used to preserve
      * insertion order.
      */
     private static final Map<String, String> CARDS =
+            new LinkedHashMap<>();
+
+    /**
+     * Reverse map of definition -> term for O(1) lookups.
+     * Maintained in sync with CARDS.
+     */
+    private static final Map<String, String> DEFINITIONS =
             new LinkedHashMap<>();
 
     /**
@@ -43,6 +52,11 @@ public class Flashcard {
      * user-entered line, in order.
      */
     private static final List<String> LOG = new ArrayList<>();
+
+    /**
+     * Cached list of terms for quiz iteration. Regenerated when cards change.
+     */
+    private static List<String> cachedTerms = null;
 
     /**
      * Optional file path to export flashcards when exiting.
@@ -114,6 +128,25 @@ public class Flashcard {
     }
 
     /**
+     * Invalidates the cached terms list so it will be regenerated on next use.
+     */
+    private void invalidateCache() {
+        cachedTerms = null;
+    }
+
+    /**
+     * Returns a list of all terms, using cache when available.
+     *
+     * @return list of all card terms
+     */
+    private List<String> getTerms() {
+        if (cachedTerms == null) {
+            cachedTerms = new ArrayList<>(CARDS.keySet());
+        }
+        return cachedTerms;
+    }
+
+    /**
      * Starts interactive loop of the application.
      */
     public void run() {
@@ -160,13 +193,16 @@ public class Flashcard {
         logPrint("The definition of the card:");
         final String definition = logInput();
 
-        if (CARDS.containsValue(definition)) {
+        // O(1) lookup using reverse map
+        if (DEFINITIONS.containsKey(definition)) {
             logPrint("The definition \"" + definition + "\" already exists.");
             return;
         }
 
         CARDS.put(term, definition);
+        DEFINITIONS.put(definition, term);
         MISTAKES.put(term, 0);
+        invalidateCache();
         logPrint("The pair (\"" + term + "\":\""
                 + definition + "\") has been added.");
     }
@@ -179,8 +215,10 @@ public class Flashcard {
         final String term = logInput();
 
         if (CARDS.containsKey(term)) {
-            CARDS.remove(term);
+            final String definition = CARDS.remove(term);
+            DEFINITIONS.remove(definition);
             MISTAKES.remove(term);
+            invalidateCache();
             logPrint("The card has been removed.");
         } else {
             logPrint("Can't remove \"" + term + "\": there is no such card.");
@@ -211,10 +249,18 @@ public class Flashcard {
                 final int mistakeCount =
                         Integer.parseInt(fileScanner.nextLine());
 
+                // Remove old definition mapping if term exists
+                final String oldDefinition = CARDS.get(term);
+                if (oldDefinition != null) {
+                    DEFINITIONS.remove(oldDefinition);
+                }
+
                 CARDS.put(term, definition);
+                DEFINITIONS.put(definition, term);
                 MISTAKES.put(term, mistakeCount);
                 count++;
             }
+            invalidateCache();
             logPrint(count + " cards have been loaded.");
         } catch (final IOException e) {
             logPrint("File not found.");
@@ -259,7 +305,7 @@ public class Flashcard {
     private void askCards() {
         logPrint("How many times to ask?");
         final int times = Integer.parseInt(logInput());
-        final List<String> terms = new ArrayList<>(CARDS.keySet());
+        final List<String> terms = getTerms();
 
         for (int i = 0; i < times; i++) {
             final String term = terms.get(i % terms.size());
@@ -271,7 +317,8 @@ public class Flashcard {
             if (answer.equals(correctDefinition)) {
                 logPrint("Correct!");
             } else {
-                final String otherTerm = findTermByDefinition(answer);
+                // O(1) lookup using reverse map
+                final String otherTerm = DEFINITIONS.get(answer);
                 MISTAKES.put(term, MISTAKES.getOrDefault(term, 0) + 1);
 
                 if (otherTerm != null) {
@@ -285,21 +332,6 @@ public class Flashcard {
                 }
             }
         }
-    }
-
-    /**
-     * Finds the term that has the given definition.
-     *
-     * @param def definition to search for
-     * @return term whose definition equals {@code def}, or {@code null}
-     */
-    private String findTermByDefinition(final String def) {
-        for (final Map.Entry<String, String> entry : CARDS.entrySet()) {
-            if (entry.getValue().equals(def)) {
-                return entry.getKey();
-            }
-        }
-        return null;
     }
 
     /**
@@ -325,23 +357,27 @@ public class Flashcard {
     /**
      * Prints the card(s) with the highest mistake counts.
      * If no mistakes were recorded, prints a message accordingly.
+     * Optimized to find max and collect hardest cards in a single pass.
      */
     private void hardestCard() {
         int max = 0;
-        for (final int v : MISTAKES.values()) {
-            max = Math.max(max, v);
+        final List<String> hardest = new ArrayList<>();
+
+        // Single pass: find max and collect terms with that max
+        for (final Map.Entry<String, Integer> entry : MISTAKES.entrySet()) {
+            final int errorCount = entry.getValue();
+            if (errorCount > max) {
+                max = errorCount;
+                hardest.clear();
+                hardest.add(entry.getKey());
+            } else if (errorCount == max && errorCount > 0) {
+                hardest.add(entry.getKey());
+            }
         }
 
         if (max == 0) {
             logPrint("There are no cards with errors.");
             return;
-        }
-
-        final List<String> hardest = new ArrayList<>();
-        for (final Map.Entry<String, Integer> entry : MISTAKES.entrySet()) {
-            if (entry.getValue() == max) {
-                hardest.add(entry.getKey());
-            }
         }
 
         if (hardest.size() == 1) {

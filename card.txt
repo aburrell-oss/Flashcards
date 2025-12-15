@@ -1,0 +1,3 @@
+print()
+outputs text
+0
